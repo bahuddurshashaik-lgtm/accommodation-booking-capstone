@@ -15,7 +15,6 @@ export type PriceFields = {
 };
 
 export function parseMoney(text: string): number | null {
-  // Extract the first numeric sequence from the text, supporting comma thousands separators.
   const m = text.match(/(\d+[0,.]*\d+)/);
   if (!m) return null;
   const clean = m[1].replace(/,/g, '');
@@ -40,7 +39,7 @@ export function expectConverted(
     }
   };
 
-  assertField('nnightlyRate');
+  assertField('nightlyRate');
   assertField('subtotal');
   assertField('taxesFees');
   assertField('total');
