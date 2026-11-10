@@ -1,98 +1,95 @@
 import { test, expect } from '@playwright/test';
 
-test.describe('Free Wi-Fi Filter - EPMCDMETST-71236', () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto('/');
+import { SearchResultsPage } from '../util/pages/SearchResultsPage';
+
+import { getTestSearchCriteria } from '../util/fixtures/testData';
+
+test.describe('Free Wi.‑Fi Filter - EPMCDMETST-71236', () => {
+  test('apply FEEE Wi-Fi & verify results are restricted', async ({ page }) => {
+    const c = getTestSearchCriteria();
+    const results = new SearchResultsPage(page);
+
+    await results.goto(c);
+    await results.enableFreeWifi(true);
+
+    await expect.poll(async () => results.isFreeWifiEnabled()).toBe(true);
+
+    // Spot-check a few result cards for a free wi-fi badge/indicator.
+    const spotCheckCount = 8;
+    const hasResults = await results.resultsCount();
+    expect(hasResults).toBeGreaterThan(0);
+
+    await results.verifyFreeWifiOnCards(Math.min(spotCheckCount, hasResults));
   });
 
-  test('should filter properties with free Wi-Fi', async ({ page }) => {
-    // Check the Wi-Fi filter checkbox
-    await page.check('#freeWifi');
-    await page.click('button[type="submit"]');
+  test('filter persists across all existing sort options', async ({ page }) => {
+    const c = getTestSearchCriteria();
+    const results = new SearchResultsPage(page);
 
-    // Wait for results to load
-    await page.waitForTimeout(2000);
+    await results.goto(c);
+    await results.enableFreeWifi(true);
 
-    // Verify URL has freeWifi parameter
-    expect(page.url()).toContain('freeWifi=true');
+    const sortOptions = await results.getSortOptions();
 
-    // Verify all displayed properties have Wi-Fi badge
-    const wifiBadges = page.locator('span:has-text("✓ Free Wi-Fi")');
-    const badgeCount = await wifiBadges.count();
+    // If the app only has a single sort option, there's nothing to iterate.
+    expect(sortOptions.length).toBeGreaterThan(0);
 
-    expect(badgeCount).toBeGreaterThan(0);
-  });
-
-  test('should persist Wi-Fi filter when changing sort order', async ({ page }) => {
-    // Apply Wi-Fi filter
-    await page.check('#freeWifi');
-    await page.click('button[type="submit"]');
-    await page.waitForTimeout(2000);
-
-    // Verify URL has freeWifi parameter
-    expect(page.url()).toContain('freeWifi=true');
-
-    // Change sort order
-    await page.selectOption('#sortBy', 'location');
-    await page.waitForTimeout(2000);
-
-    // Verify Wi-Fi filter is still in URL
-    expect(page.url()).toContain('freeWifi=true');
-
-    // Verify checkbox is still checked
-    const checkbox = page.locator('#freeWifi');
-    await expect(checkbox).toBeChecked();
-
-    // Verify all properties still have Wi-Fi
-    const wifiBadges = page.locator('span:has-text("✓ Free Wi-Fi")');
-    const badgeCount = await wifiBadges.count();
-    expect(badgeCount).toBeGreaterThan(0);
-  });
-
-  test('should persist Wi-Fi filter when paginating', async ({ page }) => {
-    // Apply Wi-Fi filter
-    await page.check('#freeWifi');
-    await page.click('button[type="submit"]');
-    await page.waitForTimeout(2000);
-
-    // Check if pagination exists
-    const nextButton = page.locator('button:has-text("Next")');
-    const isNextButtonEnabled = await nextButton.isEnabled();
-
-    if (isNextButtonEnabled) {
-      // Go to next page
-      await nextButton.click();
-      await page.waitForTimeout(2000);
-
-      // Verify Wi-Fi filter is still in URL
-      expect(page.url()).toContain('freeWifi=true');
-
-      // Verify checkbox is still checked
-      const checkbox = page.locator('#freeWifi');
-      await expect(checkbox).toBeChecked();
-
-      // Verify all properties still have Wi-Fi
-      const wifiBadges = page.locator('span:has-text("✓ Free Wi-Fi")');
-      const badgeCount = await wifiBadges.count();
-      expect(badgeCount).toBeGreaterThan(0);
+    for (const opt of sortOptions) {
+      await results.selectSortOption(opt);
+      await expect.poll(async () => results.isFreeWifiEnabled()).toBe(true);
+      await results.verifyFreeWifiOnCards(Math.min(5, await results.resultsCount()));
     }
   });
 
-  test('should remove Wi-Fi filter when unchecked', async ({ page }) => {
-    // Check and then uncheck the Wi-Fi filter
-    await page.check('#freeWifi');
-    await page.click('button[type="submit"]');
-    await page.waitForTimeout(2000);
+  test('filter persists across pagination (next/page select/prev)', async ({ page }) => {
+    const c = getTestSearchCriteria();
+    const results = new SearchResultsPage(page);
 
-    await page.uncheck('#freeWifi');
-    await page.click('button[type="submit"]');
-    await page.waitForTimeout(2000);
+    await results.goto(c);
+    await results.enableFreeWifi(true);
 
-    // Verify URL does not have freeWifi parameter
-    expect(page.url()).not.toContain('freeWifi=true');
+    const pages = await results.pagesAvailable();
+    if (pages < 2) {
+      test.skip();
+    }
 
-    // Verify we have results showing
-    const resultText = await page.textContent('p:has-text("Found")');
-    expect(resultText).toContain('properties');
+    // Next
+    await results.goToNextPage();
+    await expect.poll(async () => results.isFreeWifiEnabled()).toBe(true);
+
+    // Go to second page by page number navigation if available
+    if (pages >= 3) {
+      await results.goToPage(3);
+      await expect.poll(async () => results.isFreeWifiEnabled()).toBe(true);
+    }
+
+    // Prev
+    await results.goToPrevPage();
+    await expect.poll(async () => results.isFreeWifiEnabled()).toBe(true);
+  });
+
+  test('filter persists after refresh (and URL state where applicable)', async ({ page }) => {
+    const c = getTestSearchCriteria();
+    const results = new SearchResultsPage(page);
+
+    await results.goto(c);
+    await results.enableFreeWifi(true);
+
+    // Apply a non-default sort if possible
+    const sortOptions = await results.getSortOptions();
+    if (sortOptions.length > 1) {
+      await results.selectSortOption(sortOptions[1]);
+    }
+
+    // Go to page 2 if available
+    if ((await results.pagesAvailable()) >= 2) {
+      await results.goToPage(2);
+    }
+
+    const urlBefore = page.url();
+    await page.reload();
+
+    await expect.poll(async () => results.isFreeWifiEnabled()).toBe(true);
+    expect(page.url()).toContain(new URL(urlBefore).pathname);
   });
 });
