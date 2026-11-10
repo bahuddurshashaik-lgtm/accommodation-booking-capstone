@@ -1,132 +1,95 @@
 import { test, expect } from '@playwright/test';
 
-test.describe('Currency Selector - EPMCDMETST-71235', () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto('/');
+import { SearchResultsPage } from '../util/pages/SearchResultsPage';
+import { PropertyDetailsPage } from '../util/pages/PropertyDetailsPage';
+import { CheckoutQuotePage } from '../util/pages/CheckoutQuotePage';
+
+import { getTestSearchCriteria } from '../util/fixtures/testData';
+import { expectConverted, RATES, } from '../util/helpers/money';
+
+describe('Currency Selector - EPMCDMETST-71235', () => {
+  test('selector options are limited to USD/EUR/GBP (Search + Details)', async ({ page }) => {
+    const c = getTestSearchCriteria();
+    const results = new SearchResultsPage(page);
+
+    await results.goto(c);
+    const opts = await results.getCurrencyOptions();
+    expect(opts.sort()).toEqual(['EUR', 'GBP', 'USD']);
+
+    const detailsUrl = await results.openFirstPropertyDetails();
+    const details = new PropertyDetailsPage(page);
+    await details.waitForLoad();
+
+    const optsDetails = await details.getCurrencyOptions();
+    expect(optsDetails.sort()).toEqual(['EUR', 'GBP', 'USD']);
+
+    // avoid unused var enforcement in some lant configs
+    expect(detailsUrl).toBeTruthy();
   });
 
-  test('should change currency and update all prices', async ({ page }) => {
-    // Wait for initial load
-    await page.waitForTimeout(2000);
+  test('changing currency on Search updates prices and conversion matches backend rates', async ({ page }) => {
+    const c = getTestSearchCriteria();
+    const results = new SearchResultsPage(page);
 
-    // Verify initial currency is USD
-    expect(page.url()).toMatch(/currency=USD|^[^?]*$/);
+    await results.goto(c);
 
-    // Change to EUR
-    await page.selectOption('#currency', 'EUR');
-    await page.waitForTimeout(2000);
+    await results.selectCurrency('USD');
+    const usd = await results.readVisiblePriceFields();
 
-    // Verify URL has currency parameter
-    expect(page.url()).toContain('currency=EUR');
+    await results.selectCurrency('EUR');
+    const eur = await results.readVisiblePriceFields();
 
-    // Verify prices now show EUR symbol by checking page content
-    const pageContent = await page.textContent('body');
-    expect(pageContent).toContain('€');
+    await results.selectCurrency('GBP');
+    const gbp = await results.readVisiblePriceFields();
 
-    // Change to GBP
-    await page.selectOption('#currency', 'GBP');
-    await page.waitForTimeout(2000);
-
-    // Verify URL updated
-    expect(page.url()).toContain('currency=GBP');
-
-    // Verify prices now show GBP symbol
-    const gbpContent = await page.textContent('body');
-    expect(gbpContent).toContain('£');
+    // Validate conversion for whatever is displayed on this page
+    expectConverted(usd, eur, RATES.EUR);
+    expectConverted(usd, gbp, RATES.GBP);
   });
 
-  test('should persist currency when navigating to property details', async ({ page }) => {
-    // Change currency to EUR
-    await page.selectOption('#currency', 'EUR');
-    await page.waitForTimeout(2000);
+  test('currency persists Search → Details → Checkout/Quote', async ({ page }) => {
+    const c = getTestSearchCriteria();
+    const results = new SearchResultsPage(page);
 
-    // Click on first property
-    await page.click('a:has-text("View Details")');
-    await page.waitForTimeout(2000);
+    await results.goto(c);
+    await results.selectCurrency('EUR');
+    await expect.poll(async () => results.getSelectedCurrency()).toBe('EUR');
 
-    // Verify property details page has EUR in URL
-    expect(page.url()).toContain('currency=EUR');
+    await results.openFirstPropertyDetails();
+    const details = new PropertyDetailsPage(page);
+    await details.waitForLoad();
+    await expect.poll(async () => details.getSelectedCurrency()).toBe('EUR');
 
-    // Verify page shows EUR symbol
-    const pageContent = await page.textContent('body');
-    expect(pageContent).toContain('€');
+    // Proceed to checkout/quote (app may label this as Quote)
+    await details.proceedToCheckoutOrQuote();
+    const checkout = new CheckoutQuotePage(page);
+    await checkout.waitForLoad();
 
-    // Verify currency selector shows EUR
-    const selectedCurrency = await page.locator('#currency').inputValue();
-    expect(selectedCurrency).toBe('EUR');
+    const checkoutPrices = await checkout.readVisiblePriceFields();
+    // At minimum, every visible field should be marked as EUR
+    expect(checkoutPrices.currencyCode).toBe('EUR');
   });
 
-  test('should persist currency when getting booking quote', async ({ page }) => {
-    // Change currency to GBP
-    await page.selectOption('#currency', 'GBP');
-    await page.waitForTimeout(2000);
+  test('currency persists after refresh on Search + Details + Checkout/Quote', async ({ page }) => {
+    const c = getTestSearchCriteria();
+    const results = new SearchResultsPage(page);
 
-    // Click on first property
-    await page.click('a:has-text("View Details")');
-    await page.waitForTimeout(2000);
+    await results.goto(c);
+    await results.selectCurrency('GBP');
+    await page.reload();
+    await expect.poll(async () => results.getSelectedCurrency()).toBe('GBP');
 
-    // Get booking quote
-    await page.fill('#nights', '3');
-    await page.click('button:has-text("Calculate")');
-    await page.waitForTimeout(2000);
+    await results.openFirstPropertyDetails();
+    const details = new PropertyDetailsPage(page);
+    await details.waitForLoad();
+    await page.reload();
+    await expect.poll(async () => details.getSelectedCurrency()).toBe('GBP');
 
-    // Verify quote shows GBP prices
-    const quoteText = await page.locator('h4:has-text("Quote Summary")').textContent();
-    expect(quoteText).toBeTruthy();
-
-    const bodyContent = await page.textContent('body');
-    expect(bodyContent).toContain('£');
-  });
-
-  test('should update currency on property details page', async ({ page }) => {
-    // Go to property details with default USD
-    await page.click('a:has-text("View Details")');
-    await page.waitForTimeout(2000);
-
-    // Verify initial currency is USD
-    let bodyContent = await page.textContent('body');
-    expect(bodyContent).toContain('$');
-
-    // Change to EUR on property page
-    await page.selectOption('#currency', 'EUR');
-    await page.waitForTimeout(2000);
-
-    // Verify price updated to EUR
-    bodyContent = await page.textContent('body');
-    expect(bodyContent).toContain('€');
-
-    // Verify URL updated
-    expect(page.url()).toContain('currency=EUR');
-  });
-
-  test('should maintain currency across multiple page interactions', async ({ page }) => {
-    // Set currency to EUR
-    await page.selectOption('#currency', 'EUR');
-    await page.waitForTimeout(2000);
-
-    // Apply a filter
-    await page.check('#freeWifi');
-    await page.click('button[type="submit"]');
-    await page.waitForTimeout(2000);
-
-    // Verify currency persists with filter
-    expect(page.url()).toContain('currency=EUR');
-    expect(page.url()).toContain('freeWifi=true');
-
-    // Change sort order
-    await page.selectOption('#sortBy', 'location');
-    await page.waitForTimeout(2000);
-
-    // Verify currency still persists
-    expect(page.url()).toContain('currency=EUR');
-
-    // Go to property details
-    await page.click('a:has-text("View Details")');
-    await page.waitForTimeout(2000);
-
-    // Verify currency carried over
-    expect(page.url()).toContain('currency=EUR');
-    const bodyContent = await page.textContent('body');
-    expect(bodyContent).toContain('€');
+    await details.proceedToCheckoutOrQuote();
+    const checkout = new CheckoutQuotePage(page);
+    await checkout.waitForLoad();
+    await page.reload();
+    const checkoutPrices = await checkout.readVisiblePriceFields();
+    expect(checkoutPrices.currencyCode).toBe('GBP');
   });
 });
